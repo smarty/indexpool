@@ -35,8 +35,11 @@ Always test both builds: `checker_release.go` is the default, and `checker_debug
   - After editing `primitives_test.go`, confirm with `go tool objdump` that each loop still loads and stores. The
     compiler once deleted the plain loop's body, and once forwarded its load.
   - Compare numbers only within one benchmark session; `sync.Pool`'s own time moved 12% between sessions.
-- **Tests:** `TestIndexesSurviveGarbageCollectionAndGOMAXPROCSChanges` sets `GOMAXPROCS`, so don't mark it
-  `t.Parallel()`.
+- **Tests:**
+  - `TestIndexesSurviveGarbageCollectionAndGOMAXPROCSChanges` sets `GOMAXPROCS`, so don't mark it `t.Parallel()`.
+  - The double-release tests skip unless `debugChecks` is true, which `-tags indexpool_debug` sets.
+- **README examples aren't compiled by `go test`.** There's no `example_test.go`. After any API change, paste the
+  README's Go blocks into a scratch `main` (with a `replace` to this directory) and run them with `-race`.
 - **Upstream:** `indexpool` is a fork of Go 1.27.4's `sync/pool.go` and `poolqueue.go`. Re-diff when upstream changes.
   Keep the attribution headers on `queue.go` and `indexpool.go` and the verbatim `LICENSE-GO`: Go's BSD license
   requires them for the derived code.

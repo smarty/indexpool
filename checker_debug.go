@@ -4,6 +4,10 @@ package indexpool
 
 import "sync/atomic"
 
+// debugChecks tells the tests whether Release checks for double releases. Builds with -tags indexpool_debug set it to
+// true.
+const debugChecks = true
+
 // checker tracks which indexes are acquired so Release can reject releasing one that isn't. It costs a Store per
 // Acquire and a CAS per Release, which is why it exists only under -tags indexpool_debug. A bare int can't carry a
 // generation, so a stale holder releasing an index that has since been re-acquired looks like a valid release and isn't

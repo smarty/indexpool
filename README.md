@@ -48,8 +48,6 @@ That's the whole public surface.
 
 ## Examples
 
-Both are in `example_test.go`, so `go test` checks their output.
-
 ### Reusable objects in a slice
 
 Twenty concurrent requests share four reusable sessions. Each request acquires a slot, uses the session in it, and
@@ -63,17 +61,24 @@ type session struct {
 sessions := make([]session, 4)
 pool, _ := indexpool.New(len(sessions))
 
+var requests sync.WaitGroup
 for request := range 20 {
-	go func() {
+	requests.Go(func() {
 		index := pool.Acquire() // blocks while all 4 sessions are in use
 		current := &sessions[index]
 		current.buffer.Reset()
-		fmt.Fprintf(&current.buffer, "request %d", request)
+		_, _ = fmt.Fprintf(&current.buffer, "request %d", request)
 		current.uses++
 		_ = pool.Release(index) // the session is off-limits from here on
-	}()
+	})
 }
-// Output: 20 requests served by 4 sessions
+requests.Wait()
+
+served := 0
+for index := range sessions {
+	served += sessions[index].uses
+}
+_, _ = fmt.Println(served, "requests served by", len(sessions), "sessions") // 20 requests served by 4 sessions
 ```
 
 ### Slots of one byte buffer
@@ -92,27 +97,29 @@ slot := func(index int) []byte {
 }
 
 pool, _ := indexpool.New(slotCount)
-indexes := make(chan int, slotCount)
+indexes := make(chan int, slotCount) // only indexes cross goroutines; the bytes stay in the backing buffer
 
-for range 4 { // workers
-	go func() {
+var workers sync.WaitGroup
+for range 4 {
+	workers.Go(func() {
 		for index := range indexes {
 			bytes := slot(index)
 			length := binary.LittleEndian.Uint32(bytes)
 			process(bytes[4 : 4+length])
 			_ = pool.Release(index) // the slot is off-limits from here on
 		}
-	}()
+	})
 }
 
-for message := range 100 { // producer
+for message := range 100 {
 	index := pool.Acquire() // blocks while all 16 slots are in flight
 	bytes := slot(index)
 	length := copy(bytes[4:], fmt.Sprintf("message %d", message))
 	binary.LittleEndian.PutUint32(bytes, uint32(length))
 	indexes <- index
 }
-// Output: 100 messages, 990 payload bytes, 16 of 16 indexes free
+close(indexes)
+workers.Wait()
 ```
 
 ```
@@ -129,9 +136,27 @@ for message := range 100 { // producer
 
 - **No per-message allocation and no copy between goroutines:** only an `int` crosses the channel.
 - **Backpressure:** the producer can't outrun the workers by more than 16 messages.
-- **Everything is released:** after the run, all 16 slots are free.
+- **Everything is released:** after `workers.Wait()`, all 16 slots are free again.
 
-`ExamplePool_TryAcquire` shows the load-shedding alternative: a third request against two slots gets `-1` at once.
+### Shedding load instead of waiting
+
+`TryAcquire` never blocks: a request that finds every slot in use gets `-1` at once.
+
+```go
+pool, _ := indexpool.New(2)
+first, second := pool.TryAcquire(), pool.TryAcquire()
+
+if pool.TryAcquire() < 0 {
+	_, _ = fmt.Println("third request rejected: all slots in use")
+}
+
+_ = pool.Release(first)
+if third := pool.TryAcquire(); third >= 0 {
+	_, _ = fmt.Println("after one release, a request gets a slot")
+	_ = pool.Release(third)
+}
+_ = pool.Release(second)
+```
 
 ### Why one contiguous byte buffer
 
